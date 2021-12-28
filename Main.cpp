@@ -21,31 +21,45 @@ bool chmax(T& a, const T& b) {
 
 struct messageBox {
 	String text;
-	enum style {
+	enum class styleType {
 		mb_YESNO,
-		//mb_OK
+		mb_OK
 	};
 	const Font font;
-	int type;
+	styleType style;
 	bool enable;
-	int res;
-	enum resType {
+	enum class resType {
 		NONE,
 		YES,
 		NO,
-		//OK
+		OK
 	};
-	messageBox(String text, const Font& font, int type) : text(text), font(font), type(type), enable(false), res(resType::NONE) {}
+	resType res;
+	messageBox(String text, const Font& font, styleType style) : text(text), font(font), style(style), enable(false), res(resType::NONE) {}
 	void draw() {
 		assert(enable);
 		Rect(Arg::center(400, 300), 300, 200).drawShadow(Vec2(4, 4), 16, 2, Palette::Lightgray).draw(Palette::White).drawFrame(2, Palette::Gray);
 		font(text).draw(Rect(Arg::center(400, 290), 240, 120), Palette::Black);
-		if (SimpleGUI::Button(U"はい", Vec2(280, 350), 100)) {
-			res = resType::YES;
+		if (style == styleType::mb_YESNO) {
+			if (SimpleGUI::Button(U"はい", Vec2(280, 350), 100)) {
+				res = resType::YES;
+			}
+			if (SimpleGUI::Button(U"いいえ", Vec2(420, 350), 100)) {
+				res = resType::NO;
+			}
 		}
-		if (SimpleGUI::Button(U"いいえ", Vec2(420, 350), 100)) {
-			res = resType::NO;
+		else {
+			if (SimpleGUI::Button(U"OK", Vec2(350, 350), 100)) {
+				res = resType::OK;
+			}
 		}
+	}
+	bool isAnsed() {
+		return res != resType::NONE;
+	}
+	void reset() {
+		res = resType::NONE;
+		enable = false;
 	}
 };
 
@@ -77,17 +91,38 @@ enum class tapos {
 	SIZE
 };
 
+
+namespace rightClick {
+	bool isColorSel;
+};
+
+struct FocArea {
+	int i1, i2, j1, j2;
+	bool isAct;
+	FocArea(bool isAct = false) : i1(0), i2(0), j1(0), j2(0), isAct(isAct) { assert(!isAct); }
+	FocArea(int i, int j) : i1(i), i2(i), j1(j), j2(j), isAct(true) {}
+	FocArea(int i1, int i2, int j1, int j2) :i1(i1), i2(i2), j1(j1), j2(j2), isAct(true) {}
+	int w() {
+		return j2 - j1 + 1;
+	}
+	int h() {
+		return i2 - i1 + 1;
+	}
+};
+
 struct CellData {
 	int h, w;
 	String title;
 	std::vector<int> cellws;
 	std::vector<int> sumW;
 	std::vector<std::vector<String>> str;
+	FocArea focArea;
 	std::vector<std::vector<HSV>> color;
 	std::vector<std::vector<borderType>> btHol, btVer;
 	std::vector<std::vector<tapos>> tas;
 	CellData(int h, int w) : h(h), w(w), title(U"タイトル"),
 		cellws(w, 100), sumW(w + 1),
+		focArea(),
 		str(h, std::vector<String>(w)),
 		color(h, std::vector<HSV>(w, HSV(0, 0, 1.0))),
 		btHol(h + 1, std::vector<borderType>(w)),
@@ -100,7 +135,7 @@ struct CellData {
 	}
 };
 
-void mouseEventProc(CellData& cellData, const Font& font, double& preClickTime, int& ladjIdx, int& focCelli, int& focCellj, TextEditState& tbInput) {
+void mouseEventProc(CellData& cellData, const Font& font, double& preClickTime, int& ladjIdx, TextEditState& tbInput, messageBox& mbColorSel) {
 	Point mp = Cursor::Pos();
 	int hoverLadjIdx = -1;
 	if (mgHpx - headh - mgHead <= mp.y && mp.y <= mgHpx - mgHead) {
@@ -140,8 +175,7 @@ void mouseEventProc(CellData& cellData, const Font& font, double& preClickTime, 
 					}
 				}
 			}
-			focCelli = seli;
-			focCellj = selj;
+			cellData.focArea = (seli == -1 || selj == -1) ? FocArea(false) : FocArea(seli, selj);
 		}
 	}
 	if (MouseL.pressed()) {
@@ -150,15 +184,29 @@ void mouseEventProc(CellData& cellData, const Font& font, double& preClickTime, 
 			chmax(cellData.cellws[ladjIdx], 50);
 		}
 	}
-
 	if (MouseL.up()) {
 		ladjIdx = -1;
+	}
+
+	if (MouseR.down()) {
+		// 右クリック
+		// セル色変更
+		for (int i = 0; i < cellData.h; i++) {
+			for (int j = 0; j < cellData.w; j++) {
+				if (mgWpx + cellData.sumW[j] < mp.x && mp.x < mgWpx + cellData.sumW[j + 1]
+					&& mgHpx + cellh * i < mp.y && mp.y < mgHpx + cellh * (i + 1)) {
+					/*rightClick::isColorSel = true;
+					rightClick::pos = mp;*/
+					mbColorSel.enable = true;
+				}
+			}
+		}
 	}
 }
 auto idxToPos = [&](const CellData& cellData, int i, int j) {
 	return Vec2(mgWpx + cellData.sumW[j], mgHpx + cellh * i);
 };
-void drawCellData(CellData& cellData, const Font& font, const int& focCelli, const int& focCellj) {
+void drawCellData(CellData& cellData, const Font& font) {
 	// セルの描画
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
@@ -176,9 +224,18 @@ void drawCellData(CellData& cellData, const Font& font, const int& focCelli, con
 	}
 
 	// フォーカスしているセル
-	if (focCelli != -1 && focCellj != -1) {
-		RectF(idxToPos(cellData, focCelli, focCellj), cellData.cellws[focCellj], cellh).drawFrame(4, Palette::Green);
+	if (cellData.focArea.isAct) {
+		int width = 0;
+		for (int j = cellData.focArea.j1; j <= cellData.focArea.j2; j++) {
+			width += cellData.cellws[j];
+		}
+		RectF(idxToPos(cellData, cellData.focArea.i1, cellData.focArea.j1), width, cellh * cellData.focArea.h()).drawFrame(4, Palette::Green);
 	}
+
+	// 右クリック時カラーピッカーの描画
+	/*if (rightClick::isColorSel) {
+		SimpleGUI::ColorPicker(cellData.color[cellData.focArea.i1][cellData.focArea.j1], rightClick::pos);
+	}*/
 
 	// テキストdataの描画
 	for (int i = 0; i < cellData.h; i++) {
@@ -200,14 +257,34 @@ void drawCellData(CellData& cellData, const Font& font, const int& focCelli, con
 	}
 }
 
-void tbInputUpdate(CellData& cellData, const int& focCelli, const int& focCellj, TextEditState& tbInput) {
-	if (focCelli != -1 && focCellj != -1) {
-		cellData.str[focCelli][focCellj] = tbInput.text;
+void tbInputUpdate(CellData& cellData, TextEditState& tbInput) {
+	if (cellData.focArea.isAct) {
+		cellData.str[cellData.focArea.i1][cellData.focArea.j1] = tbInput.text;
 	}
 	else {
 		tbInput.text = U"";
 	}
 }
+
+template<typename T>
+T getMode(const std::vector<std::vector<T>>& s) {
+	int h = s.size();
+	int w = s[0].size();
+	std::map<T, int> cnt;
+	for (int i = 0; i < h; i++) {
+		for (int j = 0; j < w; j++) {
+			cnt[s[i][j]]++;
+		}
+	}
+	int maxCnt = 0;
+	T mode;
+	for (const auto& p : cnt) {
+		if (chmax(maxCnt, p.second)) {
+			mode = p.first;
+		}
+	}
+	return mode;
+};
 
 String convertData(const CellData& cellData) {
 	enum class bpos {
@@ -216,7 +293,7 @@ String convertData(const CellData& cellData) {
 		top,
 		left
 	};
-	
+
 	auto taToClassS = [](tapos pos) {
 		std::map<tapos, String> m = {
 			{ tapos::left, U"L" },
@@ -243,7 +320,7 @@ String convertData(const CellData& cellData) {
 		};
 		return U"t" + mpos[pos] + mline[bt.l] + mthick[bt.t];
 	};
-	
+
 	String res = U"]";		// 表開始記号
 	res += cellData.title;	// タイトル
 	res += U"]";			// クラス開始記号
@@ -266,15 +343,41 @@ String convertData(const CellData& cellData) {
 			}
 		}
 	}
-	res += U" " + taToClassS(maxTaType);
-	// 個々のセル指定
+	res += U" " + taToClassS(getMode(cellData.tas));
+	// 個々のセルの指定を調べる
+	std::vector<std::vector<String>> bClassSr(cellData.h, std::vector<String>(cellData.w));
+	std::vector<std::vector<String>> bClassSb(cellData.h, std::vector<String>(cellData.w));
+	std::vector<std::vector<String>> colS(cellData.h, std::vector<String>(cellData.w));
+	for (int i = 0; i < cellData.h; i++) {
+		for (int j = 0; j < cellData.w; j++) {
+			bClassSr[i][j] = bToClassS(bpos::right, cellData.btVer[i][j + 1]);
+			bClassSb[i][j] = bToClassS(bpos::bottom, cellData.btHol[i + 1][j]);
+			colS[i][j] = U"#" + cellData.color[i][j].toColor().toHex();
+		}
+	}
+	String modeBClassSr = getMode(bClassSr);
+	String modeBClassSb = getMode(bClassSb);
+	String modeColS = getMode(colS);
+	res += U" " + modeBClassSr;
+	res += U" " + modeBClassSb;
+	res += U" " + modeColS;
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
 			res += U";";
 			res += cellData.str[i][j];
-			res += bToClassS(bpos::right, cellData.btVer[i][j + 1]);
-			res += U" " + bToClassS(bpos::bottom, cellData.btHol[i + 1][j]);
-			res += U",#" + cellData.color[i][j].toColor().toHex();
+			String segRes = U"";
+			if (modeBClassSr != bClassSr[i][j]) {
+				segRes += bClassSr[i][j];
+			}
+			if (modeBClassSb != bClassSb[i][j]) {
+				if (segRes.size() != 0) segRes += U" ";
+				segRes += bClassSb[i][j];
+			}
+			if (modeColS != colS[i][j]) {
+				if (segRes.size() != 0) segRes += U",";
+				segRes += colS[i][j];
+			}
+			res += segRes;
 		}
 		res += U"\n";
 	}
@@ -299,7 +402,6 @@ void Main() {
 	TextEditState tbW;
 	tbW.text = U"3";
 	TextEditState tbInput;
-	int focCelli = 0, focCellj = 0;
 
 	//String warnMsg = U"warnig";
 
@@ -307,27 +409,28 @@ void Main() {
 
 	double preClickTime = Scene::Time();
 
-	messageBox mbCreateNewTable(U"新しい表を作成します。この結果は削除されますがよろしいですか。", fontMsg, messageBox::style::mb_YESNO);
+	messageBox mbCreateNewTable(U"新しい表を作成します。この結果は削除されますがよろしいですか。", fontMsg, messageBox::styleType::mb_YESNO);
+	messageBox mbReqN(U"列数および行数には自然数を入力してください。", fontMsg, messageBox::styleType::mb_OK);
+	messageBox mbColorSel(U"", fontMsg, messageBox::styleType::mb_OK);
+	messageBox mbConvertSuc(U"コンバート結果がクリップボードにコピーされました。", fontMsg, messageBox::styleType::mb_OK);
 
 	auto enableMb = [&]() {
-		return mbCreateNewTable.enable;
+		return mbCreateNewTable.enable || mbReqN.enable || mbColorSel.enable || mbConvertSuc.enable;
 	};
 
 	while (System::Update()) {
-		if (mbCreateNewTable.res != messageBox::resType::NONE) {
+		if (mbCreateNewTable.isAnsed()) {
 			if (mbCreateNewTable.res == messageBox::resType::YES) {
 				int th = ParseOr<int>(tbH.text, -1);
 				int tw = ParseOr<int>(tbW.text, -1);
 				if ((tbH.text == U"" || th <= 0) || (tbW.text == U"" || tw <= 0)) {
-					// 求 自然数
+					mbReqN.enable = true;
 					tbH.text = Format(cellData.h);
 					tbW.text = Format(cellData.w);
 				}
 				else {
 					// 表サイズの変更
 					cellData = CellData(th, tw);
-					focCelli = 0;
-					focCellj = 0;
 					tbInput.text = U"";
 					tbTitle.text = U"タイトル";
 				}
@@ -336,20 +439,33 @@ void Main() {
 				tbH.text = Format(cellData.h);
 				tbW.text = Format(cellData.w);
 			}
-			mbCreateNewTable.res = messageBox::resType::NONE;
-			mbCreateNewTable.enable = false;
+			mbCreateNewTable.reset();
 		}
-		drawCellData(cellData, font, focCelli, focCellj);
+		if (mbReqN.isAnsed()) {
+			mbReqN.reset();
+		}
+		if (mbColorSel.isAnsed()) {
+			mbColorSel.reset();
+		}
+		if (mbConvertSuc.isAnsed()) {
+			mbConvertSuc.reset();
+		}
+		drawCellData(cellData, font);
 		if (enableMb()) {
-			mbCreateNewTable.draw();
+			if (mbCreateNewTable.enable) mbCreateNewTable.draw();
+			if (mbReqN.enable) mbReqN.draw();
+			if (mbColorSel.enable) {
+				mbColorSel.draw();
+				SimpleGUI::ColorPicker(cellData.color[cellData.focArea.i1][cellData.focArea.j1], Vec2(320, 210));
+			}
+			if (mbConvertSuc.enable) mbConvertSuc.draw();
 		}
 		else {
 			cellData.reCalcWSum();
 
-			mouseEventProc(cellData, font, preClickTime, ladjIdx, focCelli, focCellj, tbInput);
+			mouseEventProc(cellData, font, preClickTime, ladjIdx, tbInput, mbColorSel);
 
-
-			tbInputUpdate(cellData, focCelli, focCellj, tbInput);
+			tbInputUpdate(cellData, tbInput);
 		}
 
 		SimpleGUI::TextBox(tbH, Vec2(mgWpx, 10), 60, 3, !enableMb());
@@ -364,11 +480,12 @@ void Main() {
 		if (SimpleGUI::Button(U"コンバート", Vec2(mgWpx + 410, 60), unspecified, !enableMb())) {
 			String res = convertData(cellData);
 			Clipboard::SetText(res);
+			mbConvertSuc.enable = true;
 		}
 		//fontSub(warnMsg).region(mgWpx, 550).stretched(5).drawFrame(2, Palette::Black).draw(Palette::Yellow);
 		//fontSub(warnMsg).draw(mgWpx, 550, Palette::Black);
-		if (focCelli != -1 && focCellj != -1) {
-			SimpleGUI::TextBox(tbInput, idxToPos(cellData, focCelli, focCellj) + Vec2(10, 10), cellData.cellws[focCellj]);
+		if (cellData.focArea.isAct && !enableMb()) {
+			SimpleGUI::TextBox(tbInput, idxToPos(cellData, cellData.focArea.i1, cellData.focArea.j1) + Vec2(10, 10), cellData.cellws[cellData.focArea.j1]);
 		}
 	}
 }

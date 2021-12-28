@@ -2,4 +2,4 @@
 !*/
 !.gitignore
 !Main.cpp
-!App/*.exe
+!App/tableEditor.exe

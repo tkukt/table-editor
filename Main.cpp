@@ -1,5 +1,4 @@
 ﻿#include <Siv3D.hpp> // OpenSiv3D v0.6.3
-#include <Siv3D/Windows/Windows.hpp>
 template <typename T>
 bool chmin(T& a, const T& b) {
 	if (a > b) {
@@ -16,8 +15,6 @@ bool chmax(T& a, const T& b) {
 	}
 	return false;
 }
-
-
 
 struct messageBox {
 	String text;
@@ -64,7 +61,7 @@ struct messageBox {
 };
 
 // ウィンドウ位置定数
-const int mgHpx = 160, mgWpx = 50;
+const int mgHpx = 200, mgWpx = 50;
 const int cellh = 50;
 const int headh = 25;
 const int mgHead = 10;
@@ -83,6 +80,12 @@ struct borderType {
 	thick t;
 	borderType(line l, thick t) : l(l), t(t) {}
 	borderType() : l(line::solid), t(thick::normal) {}
+	bool operator==(borderType rhs) {
+		return l == rhs.l && t == rhs.t;
+	}
+	bool operator!=(borderType rhs) {
+		return !(*this == rhs);
+	}
 };
 enum class tapos {
 	left,
@@ -92,8 +95,9 @@ enum class tapos {
 };
 
 
-namespace rightClick {
-	bool isColorSel;
+namespace inputMode {
+	bool isBorderMode;
+	borderType nowInBt;
 };
 
 struct FocArea {
@@ -137,6 +141,45 @@ struct CellData {
 
 void mouseEventProc(CellData& cellData, const Font& font, double& preClickTime, int& ladjIdx, TextEditState& tbInput, messageBox& mbColorSel) {
 	Point mp = Cursor::Pos();
+
+	// 罫線作成モードのとき
+	if (inputMode::isBorderMode) {
+		if (MouseL.down()) {
+			int minDist = INT_MAX;
+			bool isHol;
+			int mi, mj;
+			// 横
+			for (int i = 0; i < cellData.h + 1; i++) {
+				for (int j = 0; j < cellData.w; j++) {
+					if (mgWpx + cellData.sumW[j] <= mp.x && mp.x <= mgWpx + cellData.sumW[j + 1]) {
+						if (chmin(minDist, abs((mgHpx + cellh * i) - mp.y))) {
+							isHol = true;
+							mi = i;
+							mj = j;
+						}
+					}
+				}
+			}
+			// 縦
+			for (int i = 0; i < cellData.h; i++) {
+				for (int j = 0; j < cellData.w + 1; j++) {
+					if (mgHpx + cellh * i <= mp.y && mp.y <= mgHpx + cellh * (i + 1)) {
+						if (chmin(minDist, abs((mgWpx + cellData.sumW[j]) - mp.x))) {
+							isHol = false;
+							mi = i;
+							mj = j;
+						}
+					}
+				}
+			}
+			if (minDist <= 10) {
+				// 線上クリック判定
+				(isHol ? cellData.btHol[mi][mj] : cellData.btVer[mi][mj]) = inputMode::nowInBt;
+			}
+		}
+		return; // early return
+	}
+
 	int hoverLadjIdx = -1;
 	if (mgHpx - headh - mgHead <= mp.y && mp.y <= mgHpx - mgHead) {
 		for (int i = 1; i <= cellData.w; i++) {
@@ -210,7 +253,40 @@ void drawCellData(CellData& cellData, const Font& font) {
 	// セルの描画
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
-			RectF(idxToPos(cellData, i, j), cellData.cellws[j], cellh).draw(cellData.color[i][j]).drawFrame(1, Palette::Black);
+			RectF(idxToPos(cellData, i, j), cellData.cellws[j], cellh).draw(cellData.color[i][j]);
+		}
+	}
+
+	// 罫線の描画
+	auto drawBorder = [&](bool isHol, int i, int j, const borderType& bt) {
+		int thick = (bt.t == borderType::thick::bold) ? 3 : 1;
+		int vi = isHol ? 0 : 1;
+		int vj = isHol ? 1 : 0;
+		Vec2 mg = isHol ? Vec2(0, 2) : Vec2(2, 0);
+		switch (bt.l) {
+		case borderType::line::solid:
+			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(thick, Palette::Black);
+			break;
+		case borderType::line::dash:
+			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(LineStyle::SquareDot, thick, Palette::Black);
+			break;
+		case borderType::line::doubled:
+			Line(idxToPos(cellData, i, j) + mg, idxToPos(cellData, i + vi, j + vj) + mg).draw(thick, Palette::Black);
+			Line(idxToPos(cellData, i, j) - mg, idxToPos(cellData, i + vi, j + vj) - mg).draw(thick, Palette::Black);
+			break;
+		default:
+			assert(false && "illegal borderType");
+			break;
+		}
+	};
+	for (int i = 0; i < cellData.h + 1; i++) { // 横線
+		for (int j = 0; j < cellData.w; j++) {
+			drawBorder(true, i, j, cellData.btHol[i][j]);
+		}
+	}
+	for (int i = 0; i < cellData.h; i++) { // 縦線
+		for (int j = 0; j < cellData.w + 1; j++) {
+			drawBorder(false, i, j, cellData.btVer[i][j]);
 		}
 	}
 
@@ -360,7 +436,7 @@ String convertData(const CellData& cellData) {
 	String modeColS = getMode(colS);
 	res += U" " + modeBClassSr;
 	res += U" " + modeBClassSb;
-	res += U" " + modeColS;
+	res += U"," + modeColS;
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
 			res += U";";
@@ -377,6 +453,7 @@ String convertData(const CellData& cellData) {
 				if (segRes.size() != 0) segRes += U",";
 				segRes += colS[i][j];
 			}
+			if (segRes.size() != 0) res += U"]";
 			res += segRes;
 		}
 		res += U"\n";
@@ -403,20 +480,24 @@ void Main() {
 	tbW.text = U"3";
 	TextEditState tbInput;
 
-	//String warnMsg = U"warnig";
-
 	int ladjIdx = -1;
 
 	double preClickTime = Scene::Time();
 
-	messageBox mbCreateNewTable(U"新しい表を作成します。この結果は削除されますがよろしいですか。", fontMsg, messageBox::styleType::mb_YESNO);
+	messageBox mbCreateNewTable(U"新しい表を作成します。現在のデータは削除されますがよろしいですか。", fontMsg, messageBox::styleType::mb_YESNO);
 	messageBox mbReqN(U"列数および行数には自然数を入力してください。", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbColorSel(U"", fontMsg, messageBox::styleType::mb_OK);
+	messageBox mbBorderTypeSel(U"", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbConvertSuc(U"コンバート結果がクリップボードにコピーされました。", fontMsg, messageBox::styleType::mb_OK);
+	messageBox mbConvertFal(U"表の上の罫線および左の罫線は同じ種類にしてください。", fontMsg, messageBox::styleType::mb_OK);
 
 	auto enableMb = [&]() {
-		return mbCreateNewTable.enable || mbReqN.enable || mbColorSel.enable || mbConvertSuc.enable;
+		return mbCreateNewTable.enable || mbReqN.enable || mbColorSel.enable || mbBorderTypeSel.enable || mbConvertSuc.enable || mbConvertFal.enable;
 	};
+
+	const std::vector<String> btLineList = { U"実線", U"破線", U"二重線" };
+	const std::vector<String> btThickList = { U"中線", U"太線" };
+	inputMode::nowInBt = borderType(borderType::line::solid, borderType::thick::normal);
 
 	while (System::Update()) {
 		if (mbCreateNewTable.isAnsed()) {
@@ -424,6 +505,7 @@ void Main() {
 				int th = ParseOr<int>(tbH.text, -1);
 				int tw = ParseOr<int>(tbW.text, -1);
 				if ((tbH.text == U"" || th <= 0) || (tbW.text == U"" || tw <= 0)) {
+					// 求 自然数
 					mbReqN.enable = true;
 					tbH.text = Format(cellData.h);
 					tbW.text = Format(cellData.w);
@@ -447,8 +529,14 @@ void Main() {
 		if (mbColorSel.isAnsed()) {
 			mbColorSel.reset();
 		}
+		if (mbBorderTypeSel.isAnsed()) {
+			mbBorderTypeSel.reset();
+		}
 		if (mbConvertSuc.isAnsed()) {
 			mbConvertSuc.reset();
+		}
+		if (mbConvertFal.isAnsed()) {
+			mbConvertFal.reset();
 		}
 		drawCellData(cellData, font);
 		if (enableMb()) {
@@ -458,7 +546,17 @@ void Main() {
 				mbColorSel.draw();
 				SimpleGUI::ColorPicker(cellData.color[cellData.focArea.i1][cellData.focArea.j1], Vec2(320, 210));
 			}
+			if (mbBorderTypeSel.enable) {
+				mbBorderTypeSel.draw();
+				size_t nowBtLine = (size_t)inputMode::nowInBt.l,
+					nowBtThick = (size_t)inputMode::nowInBt.t;
+				SimpleGUI::RadioButtons(nowBtLine, btLineList, Vec2(300, 210), 100);
+				SimpleGUI::RadioButtons(nowBtThick, btThickList, Vec2(420, 210), 100);
+				inputMode::nowInBt.l = (borderType::line)nowBtLine;
+				inputMode::nowInBt.t = (borderType::thick)nowBtThick;
+			}
 			if (mbConvertSuc.enable) mbConvertSuc.draw();
+			if (mbConvertFal.enable) mbConvertFal.draw();
 		}
 		else {
 			cellData.reCalcWSum();
@@ -478,12 +576,34 @@ void Main() {
 		SimpleGUI::TextBox(tbTitle, Vec2(mgWpx, 60), 400, unspecified, !enableMb());
 		cellData.title = tbTitle.text;
 		if (SimpleGUI::Button(U"コンバート", Vec2(mgWpx + 410, 60), unspecified, !enableMb())) {
-			String res = convertData(cellData);
-			Clipboard::SetText(res);
-			mbConvertSuc.enable = true;
+			// 表の上と左のborderTypeが一致しているかのチェック
+			bool isCorBt = true;
+			for (int j = 0; j < cellData.w - 1; j++) {
+				if (cellData.btHol[0][j] != cellData.btHol[0][j + 1]) {
+					isCorBt = false;
+				}
+			}
+			for (int i = 0; i < cellData.h - 1; i++) {
+				if (cellData.btVer[i][0] != cellData.btVer[i + 1][0]) {
+					isCorBt = false;
+				}
+			}
+			if (isCorBt) {
+				String res = convertData(cellData);
+				Clipboard::SetText(res);
+				mbConvertSuc.enable = true;
+			}
+			else {
+				mbConvertFal.enable = true;
+			}
 		}
-		//fontSub(warnMsg).region(mgWpx, 550).stretched(5).drawFrame(2, Palette::Black).draw(Palette::Yellow);
-		//fontSub(warnMsg).draw(mgWpx, 550, Palette::Black);
+		SimpleGUI::CheckBox(inputMode::isBorderMode, U"罫線作成モード", Vec2(mgWpx, 120), unspecified, !enableMb());
+		if (SimpleGUI::Button(btLineList[(int)inputMode::nowInBt.l]
+			+ U" " + btThickList[(int)inputMode::nowInBt.t],
+			Vec2(mgWpx + 200, 120), unspecified, !enableMb())) {
+			mbBorderTypeSel.enable = true;
+		}
+
 		if (cellData.focArea.isAct && !enableMb()) {
 			SimpleGUI::TextBox(tbInput, idxToPos(cellData, cellData.focArea.i1, cellData.focArea.j1) + Vec2(10, 10), cellData.cellws[cellData.focArea.j1]);
 		}

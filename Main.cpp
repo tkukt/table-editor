@@ -78,10 +78,11 @@ struct borderType {
 	};
 	line l;
 	thick t;
-	borderType(line l, thick t) : l(l), t(t) {}
-	borderType() : l(line::solid), t(thick::normal) {}
+	HSV color;
+	borderType(line l, thick t, HSV(color)) : l(l), t(t), color(color) {}
+	borderType() : l(line::solid), t(thick::normal), color(Palette::Black) {}
 	bool operator==(borderType rhs) {
-		return l == rhs.l && t == rhs.t;
+		return l == rhs.l && t == rhs.t && color == rhs.color;
 	}
 	bool operator!=(borderType rhs) {
 		return !(*this == rhs);
@@ -94,10 +95,14 @@ enum class tapos {
 	SIZE
 };
 
-
 namespace inputMode {
 	bool isBorderMode;
 	borderType nowInBt;
+};
+
+namespace borderColorSample {
+	Rect r(mgWpx + 460, 122, 30, 30);
+	HSV borderColor;
 };
 
 struct FocArea {
@@ -265,14 +270,14 @@ void drawCellData(CellData& cellData, const Font& font) {
 		Vec2 mg = isHol ? Vec2(0, 2) : Vec2(2, 0);
 		switch (bt.l) {
 		case borderType::line::solid:
-			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(thick, Palette::Black);
+			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(thick, bt.color);
 			break;
 		case borderType::line::dash:
-			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(LineStyle::SquareDot, thick, Palette::Black);
+			Line(idxToPos(cellData, i, j), idxToPos(cellData, i + vi, j + vj)).draw(LineStyle::SquareDot, thick, bt.color);
 			break;
 		case borderType::line::doubled:
-			Line(idxToPos(cellData, i, j) + mg, idxToPos(cellData, i + vi, j + vj) + mg).draw(thick, Palette::Black);
-			Line(idxToPos(cellData, i, j) - mg, idxToPos(cellData, i + vi, j + vj) - mg).draw(thick, Palette::Black);
+			Line(idxToPos(cellData, i, j) + mg, idxToPos(cellData, i + vi, j + vj) + mg).draw(thick, bt.color);
+			Line(idxToPos(cellData, i, j) - mg, idxToPos(cellData, i + vi, j + vj) - mg).draw(thick, bt.color);
 			break;
 		default:
 			assert(false && "illegal borderType");
@@ -370,37 +375,37 @@ String convertData(const CellData& cellData) {
 		left
 	};
 
-	auto taToClassS = [](tapos pos) {
+	auto taToClassS = [](tapos pos) { // text alignment
 		std::map<tapos, String> m = {
-			{ tapos::left, U"L" },
-			{ tapos::center, U"C" },
-			{ tapos::right, U"R" }
+			{ tapos::left, U"L" },		// 左揃え
+			{ tapos::center, U"C" },	// 中央揃え
+			{ tapos::right, U"R" }		// 右揃え
 		};
-		return U"cTA" + m[pos];
+		return U"tX" + m[pos];	// tX[LCR]
 	};
-	auto bToClassS = [](bpos pos, borderType bt) {
-		std::map<bpos, String> mpos = {
-			{ bpos::bottom, U"B" },
-			{ bpos::right, U"R" },
-			{ bpos::top, U"T" },
-			{ bpos::left, U"L" },
+	auto bToClassS = [](bpos pos, borderType bt) { // 罫線の種類
+		std::map<bpos, String> mpos = { // 罫線の位置
+			{ bpos::bottom, U"B" },		// 下
+			{ bpos::right, U"R" },		// 右
+			{ bpos::top, U"T" },		// 上(全体のみのexc)
+			{ bpos::left, U"L" },		// 左(全体のみのexc)
 		};
-		std::map<borderType::line, String> mline = {
-			{ borderType::line::solid, U"S" },
-			{ borderType::line::dash, U"D" },
-			{ borderType::line::doubled, U"W" }
+		std::map<borderType::line, String> mline = { // 線種
+			{ borderType::line::solid, U"S" },	// 実線(single)
+			{ borderType::line::dash, U"D" },	// 破線(dash)
+			{ borderType::line::doubled, U"W" }	// 二重線(W double)
 		};
-		std::map<borderType::thick, String> mthick = {
-			{ borderType::thick::normal, U"" },
-			{ borderType::thick::bold, U"B" }
+		std::map<borderType::thick, String> mthick = { // 太さ
+			{ borderType::thick::normal, U"" },	// 中線（普通）
+			{ borderType::thick::bold, U"B" }	// 太線
 		};
-		return U"t" + mpos[pos] + mline[bt.l] + mthick[bt.t];
+		return U"t" + mpos[pos] + mline[bt.l] + mthick[bt.t];	// t[BRTL][SDW]B?
 	};
 
 	String res = U"]";		// 表開始記号
 	res += cellData.title;	// タイトル
 	res += U"]";			// クラス開始記号
-	// 表枠上/左側指定
+	// 表枠上/左側の罫線種類指定
 	res += bToClassS(bpos::top, cellData.btHol[0][0]);
 	res += U" " + bToClassS(bpos::left, cellData.btVer[0][0]);
 	// TA多数決
@@ -424,19 +429,29 @@ String convertData(const CellData& cellData) {
 	std::vector<std::vector<String>> bClassSr(cellData.h, std::vector<String>(cellData.w));
 	std::vector<std::vector<String>> bClassSb(cellData.h, std::vector<String>(cellData.w));
 	std::vector<std::vector<String>> colS(cellData.h, std::vector<String>(cellData.w));
+	std::vector<std::vector<String>> bColSr(cellData.h, std::vector<String>(cellData.w));
+	std::vector<std::vector<String>> bColSb(cellData.h, std::vector<String>(cellData.w));
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
 			bClassSr[i][j] = bToClassS(bpos::right, cellData.btVer[i][j + 1]);
+			bColSr[i][j] = U"r#" + cellData.btVer[i][j + 1].color.toColor().toHex();
 			bClassSb[i][j] = bToClassS(bpos::bottom, cellData.btHol[i + 1][j]);
+			bColSb[i][j] = U"b#" + cellData.btHol[i + 1][j].color.toColor().toHex();
 			colS[i][j] = U"#" + cellData.color[i][j].toColor().toHex();
 		}
 	}
 	String modeBClassSr = getMode(bClassSr);
+	String modeBColSr = getMode(bColSr);
 	String modeBClassSb = getMode(bClassSb);
+	String modeBColSb = getMode(bColSb);
 	String modeColS = getMode(colS);
 	res += U" " + modeBClassSr;
 	res += U" " + modeBClassSb;
 	res += U"," + modeColS;
+	res += U" t#" + cellData.btHol[0][0].color.toColor().toHex(); // 上罫線色
+	res += U" l#" + cellData.btVer[0][0].color.toColor().toHex(); // 左罫線色
+	res += U" " + modeBColSr;
+	res += U" " + modeBColSb;
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
 			res += U";";
@@ -449,10 +464,20 @@ String convertData(const CellData& cellData) {
 				if (segRes.size() != 0) segRes += U" ";
 				segRes += bClassSb[i][j];
 			}
+			bool isInsCom = false;
 			if (modeColS != colS[i][j]) {
-				if (segRes.size() != 0) segRes += U",";
+				if (segRes.size() != 0) segRes += U",", isInsCom = true;
 				segRes += colS[i][j];
 			}
+			if (modeBColSr != bColSr[i][j]) {
+				if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ", isInsCom = true;
+				segRes += bColSr[i][j];
+			}
+			if (modeBColSb != bColSb[i][j]) {
+				if (segRes.size() != 0)segRes += isInsCom ? U" " : U", ";
+				segRes += bColSb[i][j];
+			}
+		
 			if (segRes.size() != 0) res += U"]";
 			res += segRes;
 		}
@@ -488,16 +513,19 @@ void Main() {
 	messageBox mbReqN(U"列数および行数には自然数を入力してください。", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbColorSel(U"", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbBorderTypeSel(U"", fontMsg, messageBox::styleType::mb_OK);
+	messageBox mbColorLineSel(U"", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbConvertSuc(U"コンバート結果がクリップボードにコピーされました。", fontMsg, messageBox::styleType::mb_OK);
 	messageBox mbConvertFal(U"表の上の罫線および左の罫線は同じ種類にしてください。", fontMsg, messageBox::styleType::mb_OK);
 
 	auto enableMb = [&]() {
-		return mbCreateNewTable.enable || mbReqN.enable || mbColorSel.enable || mbBorderTypeSel.enable || mbConvertSuc.enable || mbConvertFal.enable;
+		return mbCreateNewTable.enable || mbReqN.enable || mbColorSel.enable || mbBorderTypeSel.enable || mbColorLineSel.enable || mbConvertSuc.enable || mbConvertFal.enable;
 	};
 
 	const std::vector<String> btLineList = { U"実線", U"破線", U"二重線" };
 	const std::vector<String> btThickList = { U"中線", U"太線" };
-	inputMode::nowInBt = borderType(borderType::line::solid, borderType::thick::normal);
+	inputMode::nowInBt;
+
+	// TODO : どこか text alignment未実装
 
 	while (System::Update()) {
 		if (mbCreateNewTable.isAnsed()) {
@@ -532,6 +560,9 @@ void Main() {
 		if (mbBorderTypeSel.isAnsed()) {
 			mbBorderTypeSel.reset();
 		}
+		if (mbColorLineSel.isAnsed()) {
+			mbColorLineSel.reset();
+		}
 		if (mbConvertSuc.isAnsed()) {
 			mbConvertSuc.reset();
 		}
@@ -554,6 +585,12 @@ void Main() {
 				SimpleGUI::RadioButtons(nowBtThick, btThickList, Vec2(420, 210), 100);
 				inputMode::nowInBt.l = (borderType::line)nowBtLine;
 				inputMode::nowInBt.t = (borderType::thick)nowBtThick;
+			}
+			if (mbColorLineSel.enable) {
+				mbColorLineSel.draw();
+				// TODO
+				SimpleGUI::ColorPicker(borderColorSample::borderColor, Vec2(320, 210));
+				inputMode::nowInBt.color = borderColorSample::borderColor;
 			}
 			if (mbConvertSuc.enable) mbConvertSuc.draw();
 			if (mbConvertFal.enable) mbConvertFal.draw();
@@ -603,6 +640,10 @@ void Main() {
 			Vec2(mgWpx + 200, 120), unspecified, !enableMb())) {
 			mbBorderTypeSel.enable = true;
 		}
+		if (SimpleGUI::Button(U"色変更", Vec2(mgWpx + 350, 120), unspecified, !enableMb())) {
+			mbColorLineSel.enable = true;
+		}
+		borderColorSample::r.draw(borderColorSample::borderColor);
 
 		if (cellData.focArea.isAct && !enableMb()) {
 			SimpleGUI::TextBox(tbInput, idxToPos(cellData, cellData.focArea.i1, cellData.focArea.j1) + Vec2(10, 10), cellData.cellws[cellData.focArea.j1]);

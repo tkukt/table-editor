@@ -105,19 +105,30 @@ namespace borderColorSample {
 	Rect r(mgWpx + 460, 122, 30, 30);
 	HSV borderColor;
 };
+namespace cellColorSample {
+	HSV color;
+};
 
 struct FocArea {
-	int i1, i2, j1, j2;
+	int i1, i2, j1, j2; // 1:先に選択したセル 2:2番目に選択したセル
 	bool isAct;
-	FocArea(bool isAct = false) : i1(0), i2(0), j1(0), j2(0), isAct(isAct) { assert(!isAct); }
+	FocArea(bool isAct = false) : i1(-1), i2(-1), j1(-1), j2(-1), isAct(isAct) { assert(!isAct); }
 	FocArea(int i, int j) : i1(i), i2(i), j1(j), j2(j), isAct(true) {}
 	FocArea(int i1, int i2, int j1, int j2) :i1(i1), i2(i2), j1(j1), j2(j2), isAct(true) {}
+	void add(int i, int j) {
+		assert(i1 != -1 && j1 != -1);
+		i2 = i, j2 = j;
+	}
 	int w() const {
-		return j2 - j1 + 1;
+		return abs(j2 - j1) + 1;
 	}
 	int h() const {
-		return i2 - i1 + 1;
+		return abs(i2 - i1) + 1;
 	}
+	int l() const { return std::min(j1, j2); }
+	int r() const { return std::max(j1, j2); }
+	int u() const { return std::min(i1, i2); }
+	int d() const { return std::max(i1, i2); }
 };
 
 struct CellData {
@@ -233,14 +244,27 @@ bool mouseEventProc(CellData& cellData, FocArea& focArea, const Font& font, doub
 				tIsChangeData = true;
 				cellData.str[focArea.i1][focArea.j1] = tbinput.text;
 			}
-			if (seli != -1 && selj != -1) tbinput.text = cellData.str[seli][selj];
-			focArea = (seli == -1 || selj == -1) ? FocArea(false) : FocArea(seli, selj);
+			if (seli != -1 && selj != -1) { // セルをクリックした場合
+				tbinput.text = cellData.str[seli][selj];
+				if (KeyShift.pressed()) { // Shiftを押しながらクリックした場合
+					// アクティブセルを範囲選択
+					focArea.add(seli, selj);
+				}
+				else {
+					// 別セルクリック
+					focArea = FocArea(seli, selj);
+				}
+			}
+			else { // 範囲外をクリックした場合
+				focArea = FocArea(false);
+			}
 		}
 	}
 	if (MouseL.pressed()) {
 		if (ladjIdx != -1) {
 			cellData.cellws[ladjIdx] += mp.x - cellData.sumW[ladjIdx + 1] - mgWpx;
 			chmax(cellData.cellws[ladjIdx], 50);
+			tIsChangeData = true;
 		}
 	}
 	if (MouseL.up()) {
@@ -329,10 +353,10 @@ void drawCellData(const CellData& cellData, const FocArea& focArea, const Font& 
 	// フォーカスしているセル
 	if (focArea.isAct) {
 		int width = 0;
-		for (int j = focArea.j1; j <= focArea.j2; j++) {
+		for (int j = focArea.l(); j <= focArea.r(); j++) {
 			width += cellData.cellws[j];
 		}
-		RectF(idxToPos(cellData, focArea.i1, focArea.j1), width, cellh * focArea.h()).drawFrame(4, Palette::Green);
+		RectF(idxToPos(cellData, focArea.u(), focArea.l()), width, cellh * focArea.h()).drawFrame(4, Palette::Green);
 	}
 
 	// 右クリック時カラーピッカーの描画
@@ -585,7 +609,16 @@ void Main() {
 				tbW.text = Format(cellData.w);
 			}
 		}
-		if (mbs["ColorSel"].isAnsed()) isChangeData = true;
+		if (mbs["ColorSel"].isAnsed()) {
+			for (int i = focArea.u(); i <= focArea.d(); i++) {
+				for (int j = focArea.l(); j <= focArea.r(); j++) {
+					if (cellData.color[i][j] != cellColorSample::color) {
+						isChangeData = true;
+						cellData.color[i][j] = cellColorSample::color;
+					}
+				}
+			}
+		}
 		for (auto& [name, mb] : mbs) {
 			if (mb.isAnsed()) mb.reset();
 		}
@@ -595,7 +628,7 @@ void Main() {
 				if (mb.enable) mb.draw();
 			}
 			if (mbs["ColorSel"].enable) {
-				SimpleGUI::ColorPicker(cellData.color[focArea.i1][focArea.j1], Vec2(320, 210));
+				SimpleGUI::ColorPicker(cellColorSample::color, Vec2(320, 210));
 			}
 			if (mbs["BorderTypeSel"].enable) {
 				size_t nowBtLine = (size_t)inputMode::nowInBt.l,
@@ -611,9 +644,8 @@ void Main() {
 			}
 		}
 		else {
-			cellData.reCalcWSum();
-
 			isChangeData |= mouseEventProc(cellData, focArea, font, preClickTime, ladjIdx, tbInput, mbs["ColorSel"]);
+			cellData.reCalcWSum();
 			//tbInputUpdate(cellData, focArea, tbInput);
 		}
 
@@ -661,7 +693,7 @@ void Main() {
 		}
 		borderColorSample::r.draw(borderColorSample::borderColor);
 
-		if (focArea.isAct && !enableMb()) {
+		if (focArea.isAct && focArea.h() * focArea.w() == 1 && !enableMb()) {
 			SimpleGUI::TextBox(tbInput, idxToPos(cellData, focArea.i1, focArea.j1) + Vec2(10, 10), cellData.cellws[focArea.j1]);
 		}
 

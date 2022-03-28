@@ -102,11 +102,42 @@ namespace inputMode {
 };
 
 namespace borderColorSample {
-	Rect r(mgWpx + 460, 122, 30, 30);
+	Circle r(mgWpx + 410, 78, 12);
 	HSV borderColor;
 };
 namespace cellColorSample {
 	HSV color;
+};
+
+struct pos {
+	int i, j;
+	pos() : i(0), j(0) {}
+	pos(int i, int j) : i(i), j(j) {}
+	pos operator-() { return pos(-i, -j); }
+	pos operator+=(pos rhs) {
+		i += rhs.i;
+		j += rhs.j;
+		return *this;
+	}
+	pos operator-=(pos rhs) {
+		i -= rhs.i;
+		j -= rhs.j;
+		return *this;
+	}
+	pos operator*=(int rhs) {
+		i *= rhs;
+		j *= rhs;
+		return *this;
+	}
+	pos operator+(pos rhs) { return pos(*this) += rhs; }
+	pos operator-(pos rhs) { return pos(*this) -= rhs; }
+	pos operator*(int rhs) { return pos(*this) *= rhs; }
+	bool operator==(pos rhs) {
+		return i == rhs.i && j == rhs.j;
+	}
+	bool operator!=(pos rhs) {
+		return !(*this == rhs);
+	}
 };
 
 struct FocArea {
@@ -138,15 +169,24 @@ struct CellData {
 	std::vector<int> sumW;
 	std::vector<std::vector<String>> str;
 	std::vector<std::vector<HSV>> color;
+	std::vector<std::vector<pos>> cmbPar;
+	std::vector<std::vector<pos>> cmbSz;
 	std::vector<std::vector<borderType>> btHol, btVer;
 	std::vector<std::vector<tapos>> tas;
 	CellData(int h, int w) : h(h), w(w), title(U"タイトル"),
 		cellws(w, 100), sumW(w + 1),
 		str(h, std::vector<String>(w)),
 		color(h, std::vector<HSV>(w, HSV(0, 0, 1.0))),
+		cmbPar(h, std::vector<pos>(w)),
+		cmbSz(h, std::vector<pos>(w, pos(1, 1))),
 		btHol(h + 1, std::vector<borderType>(w)),
 		btVer(h, std::vector<borderType>(w + 1)),
 		tas(h, std::vector<tapos>(w)) {
+		for (int i = 0; i < h; i++) {
+			for (int j = 0; j < w; j++) {
+				cmbPar[i][j] = pos(i, j);
+			}
+		}
 		reCalcWSum();
 	}
 	void reCalcWSum() {
@@ -291,6 +331,48 @@ auto idxToPos = [](const CellData& cellData, int i, int j) {
 	return Vec2(mgWpx + cellData.sumW[j], mgHpx + cellh * i);
 };
 
+bool combCell(CellData& cellData, const FocArea& focArea, bool& isSuccess) {
+	isSuccess = true;
+	for (int i = focArea.u(); i <= focArea.d(); i++) {
+		for (int j = focArea.l(); j <= focArea.r(); j++) {
+			if (cellData.cmbPar[i][j] != pos(i, j) || cellData.cmbSz[i][j] != pos(1, 1)) {
+				isSuccess = false;
+			}
+		}
+	}
+	if (!isSuccess) return false;
+	cellData.cmbSz[focArea.u()][focArea.l()] = pos(focArea.h(), focArea.w());
+	for (int i = focArea.u(); i <= focArea.d(); i++) {
+		for (int j = focArea.l(); j <= focArea.r(); j++) {
+			cellData.cmbPar[i][j] = pos(focArea.u(), focArea.l());
+		}
+	}
+	return true;
+}
+
+bool reCombCell(CellData& cellData, const FocArea& focArea, bool& isSuccess) {
+	isSuccess = true;
+	for (int i = focArea.u(); i <= focArea.d(); i++) {
+		for (int j = focArea.l(); j <= focArea.r(); j++) {
+			const pos& p = cellData.cmbPar[i][j];
+			const pos& sz = cellData.cmbSz[i][j];
+			if (!(focArea.u() <= p.i && p.i + sz.i - 1 <= focArea.d() && focArea.l() <= p.j && p.j + sz.j - 1 <= focArea.r())) {
+				isSuccess = false;
+			}
+		}
+	}
+	if (!isSuccess) return false;
+	bool isChange = false;
+	for (int i = focArea.u(); i <= focArea.d(); i++) {
+		for (int j = focArea.l(); j <= focArea.r(); j++) {
+			if (cellData.cmbSz[i][j] != pos(1, 1)) isChange = true;
+			cellData.cmbPar[i][j] = pos(i, j);
+			cellData.cmbSz[i][j] = pos(1, 1);
+		}
+	}
+	return isChange;
+}
+
 void keyboardInputProc(int& recordCur, const int& recordSz) {
 	if ((KeyControl + KeyZ).down()) { // Ctrl+Z
 		recordCur = std::max(0, recordCur - 1);
@@ -332,12 +414,26 @@ void drawCellData(const CellData& cellData, const FocArea& focArea, const Font& 
 	};
 	for (int i = 0; i < cellData.h + 1; i++) { // 横線
 		for (int j = 0; j < cellData.w; j++) {
-			drawBorder(true, i, j, cellData.btHol[i][j]);
+			bool isCmbed = false;
+			if (i != 0) {
+				const pos& p = cellData.cmbPar[i - 1][j];
+				if (p.i + cellData.cmbSz[p.i][p.j].i > i) {
+					isCmbed = true;
+				}
+			}
+			if (!isCmbed) drawBorder(true, i, j, cellData.btHol[i][j]);
 		}
 	}
 	for (int i = 0; i < cellData.h; i++) { // 縦線
 		for (int j = 0; j < cellData.w + 1; j++) {
-			drawBorder(false, i, j, cellData.btVer[i][j]);
+			bool isCmbed = false;
+			if (j != 0) {
+				const pos& p = cellData.cmbPar[i][j - 1];
+				if (p.j + cellData.cmbSz[p.i][p.j].j > j) {
+					isCmbed = true;
+				}
+			}
+			if (!isCmbed) drawBorder(false, i, j, cellData.btVer[i][j]);
 		}
 	}
 
@@ -534,15 +630,27 @@ String convertData(const CellData& cellData) {
 	return res;
 }
 
+namespace fontSize {
+	const int nomal = 35;
+	const int msg = 20;
+	const int sub = 25;
+};
+
 void Main() {
 	Window::SetTitle(U"table editor");
 	Scene::SetBackground(Palette::White);
-	const Font fontMsg(20);
-	const Font fontSub(30);
-	const Font font(35);
+
+	const double zoomRatio = 1.1;
+	const int zoomMaxLev = 6;
+
+	const int fontSizeMin = round(fontSize::nomal * pow(zoomRatio, -zoomMaxLev)),
+			  fontSizeMax = round(fontSize::nomal * pow(zoomRatio, zoomMaxLev));
+	std::vector<Font> fonts(fontSizeMax + 1);
+	for (int i = fontSizeMin; i <= fontSizeMax; i++) { fonts[i] = Font(i); }
+	int zoomLevel = 0;
 
 	FocArea focArea;
-	std::vector<CellData> record = { CellData(2, 3) }; // TODO: undo redo用にvectorで
+	std::vector<CellData> record = { CellData(2, 3) };
 	int recordCur = 0;
 
 	TextEditState tbTitle;
@@ -559,13 +667,15 @@ void Main() {
 	double preClickTime = Scene::Time();
 
 	std::map<std::string, messageBox> mbs = {
-		{"CreateNewTable", messageBox(U"新しい表を作成します。現在のデータは削除されますがよろしいですか。", fontMsg, messageBox::styleType::mb_YESNO)},
-		{"ReqN", messageBox(U"列数および行数には自然数を入力してください。", fontMsg, messageBox::styleType::mb_OK)},
-		{"ColorSel", messageBox(U"", fontMsg, messageBox::styleType::mb_OK)},
-		{"BorderTypeSel", messageBox(U"", fontMsg, messageBox::styleType::mb_OK)},
-		{"ColorLineSel", messageBox(U"", fontMsg, messageBox::styleType::mb_OK)},
-		{"ConvertSuc", messageBox(U"コンバート結果がクリップボードにコピーされました。", fontMsg, messageBox::styleType::mb_OK)},
-		{"ConvertFal", messageBox(U"表の上の罫線および左の罫線は同じ種類にしてください。", fontMsg, messageBox::styleType::mb_OK)},
+		{"CreateNewTable", messageBox(U"新しい表を作成します。現在のデータは削除されますがよろしいですか。", fonts[fontSize::msg], messageBox::styleType::mb_YESNO)},
+		{"ReqN", messageBox(U"列数および行数には自然数を入力してください。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ColorSel", messageBox(U"", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"BorderTypeSel", messageBox(U"", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ColorLineSel", messageBox(U"", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ConvertSuc", messageBox(U"コンバート結果がクリップボードにコピーされました。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ConvertFal", messageBox(U"表の上の罫線および左の罫線は同じ種類にしてください。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"CombFal", messageBox(U"その領域はすでに結合されたセルを含んでいるためセルを結合できません。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ReCombFal", messageBox(U"その領域は結合されたセルを完全に含んでいないためセルの結合を解除できません。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 	};
 	auto enableMb = [&]() {
 		for (const auto& [name, mb] : mbs) {
@@ -578,6 +688,8 @@ void Main() {
 	const std::vector<String> btThickList = { U"中線", U"太線" };
 	inputMode::nowInBt;
 
+	// TODO : セル結合
+
 	// TODO : どこか text alignment未実装
 	// TODO : どこか 拡大縮小未実装
 	// TODO : どこか 縦横スクロール未実装
@@ -586,6 +698,35 @@ void Main() {
 	while (System::Update()) {
 		CellData cellData = record[recordCur];
 		bool isChangeData = false;
+
+		bool isClickBotton = false;
+		if (SimpleGUI::Button(U"セル結合", Vec2(mgWpx, 110), unspecified, focArea.isAct && !enableMb())) {
+			bool isSuccess = true;
+			isChangeData |= combCell(cellData, focArea, isSuccess);
+			if (!isSuccess) {
+				mbs["CombFal"].enable = true;
+			}
+			isClickBotton = true;
+		}
+		if (SimpleGUI::Button(U"セル結合解除", Vec2(mgWpx+130, 110), unspecified, focArea.isAct && !enableMb())) {
+			bool isSuccess = true;
+			isChangeData |= reCombCell(cellData, focArea, isSuccess);
+			if (!isSuccess) {
+				mbs["ReCombFal"].enable = true;
+			}
+			isClickBotton = true;
+		}
+		fonts[20](U"文字揃え").draw(Vec2(mgWpx+160 + 145, 113), Palette::Black);
+		if (SimpleGUI::Button(U"左", Vec2(mgWpx+160 +72+ 155, 110), unspecified, focArea.isAct && !enableMb())) {
+			isClickBotton = true;
+		}
+		if (SimpleGUI::Button(U"中", Vec2(mgWpx+160 +72+ 220, 110), unspecified, focArea.isAct && !enableMb())) {
+			isClickBotton = true;
+		}
+		if (SimpleGUI::Button(U"右", Vec2(mgWpx+160 +72+ 285, 110), unspecified, focArea.isAct && !enableMb())) {
+			isClickBotton = true;
+		}
+
 		if (mbs["CreateNewTable"].isAnsed()) {
 			if (mbs["CreateNewTable"].res == messageBox::resType::YES) {
 				int th = ParseOr<int>(tbH.text, -1);
@@ -601,7 +742,6 @@ void Main() {
 					record = { CellData(th, tw) };
 					recordCur = 0;
 					tbInput.text = U"";
-					tbTitle.text = U"タイトル";
 				}
 			}
 			else {
@@ -622,7 +762,7 @@ void Main() {
 		for (auto& [name, mb] : mbs) {
 			if (mb.isAnsed()) mb.reset();
 		}
-		drawCellData(cellData, focArea, font);
+		drawCellData(cellData, focArea, fonts[fontSize::nomal]);
 		if (enableMb()) {
 			for (auto& [name, mb] : mbs) {
 				if (mb.enable) mb.draw();
@@ -644,23 +784,25 @@ void Main() {
 			}
 		}
 		else {
-			isChangeData |= mouseEventProc(cellData, focArea, font, preClickTime, ladjIdx, tbInput, mbs["ColorSel"]);
+			if (!isClickBotton) {
+				isChangeData |= mouseEventProc(cellData, focArea, fonts[fontSize::nomal], preClickTime, ladjIdx, tbInput, mbs["ColorSel"]);
+			}
 			cellData.reCalcWSum();
 			//tbInputUpdate(cellData, focArea, tbInput);
 		}
 
 		keyboardInputProc(recordCur, (int)record.size());
 
-		SimpleGUI::TextBox(tbH, Vec2(mgWpx, 10), 60, 2, !enableMb());
-		SimpleGUI::TextBox(tbW, Vec2(mgWpx + 100, 10), 60, 2, !enableMb());
-		if (SimpleGUI::Button(U"新規作成", Vec2(mgWpx + 200, 10), unspecified, !enableMb())) {
+		SimpleGUI::TextBox(tbH, Vec2(mgWpx + 210, 10), 60, 2, !enableMb());
+		SimpleGUI::TextBox(tbW, Vec2(mgWpx + 210 + 100, 10), 60, 2, !enableMb());
+		if (SimpleGUI::Button(U"新規作成", Vec2(mgWpx + 410, 10), unspecified, !enableMb())) {
 			mbs["CreateNewTable"].enable = true;
 		}
-		fontSub(U"列").draw(mgWpx + 65, 10, Palette::Black);
-		fontSub(U"行").draw(mgWpx + 100 + 65, 10, Palette::Black);
-		SimpleGUI::TextBox(tbTitle, Vec2(mgWpx, 60), 400, unspecified, !enableMb());
+		fonts[fontSize::sub](U"列").draw(mgWpx + 210 + 65, 10, Palette::Black);
+		fonts[fontSize::sub](U"行").draw(mgWpx + 210 + 100 + 65, 10, Palette::Black);
+		SimpleGUI::TextBox(tbTitle, Vec2(mgWpx, 10), 200, unspecified, !enableMb());
 		cellData.title = tbTitle.text;
-		if (SimpleGUI::Button(U"コンバート", Vec2(mgWpx + 410, 60), unspecified, !enableMb())) {
+		if (SimpleGUI::Button(U"コンバート", Vec2(mgWpx + 550, 10), unspecified, !enableMb())) {
 			// 表の上と左のborderTypeが一致しているかのチェック
 			bool isCorBt = true;
 			for (int j = 0; j < cellData.w - 1; j++) {
@@ -682,13 +824,13 @@ void Main() {
 				mbs["ConvertFal"].enable = true;
 			}
 		}
-		SimpleGUI::CheckBox(inputMode::isBorderMode, U"罫線作成モード", Vec2(mgWpx, 120), unspecified, !enableMb());
+		SimpleGUI::CheckBox(inputMode::isBorderMode, U"罫線作成モード", Vec2(mgWpx, 60), unspecified, !enableMb());
 		if (SimpleGUI::Button(btLineList[(int)inputMode::nowInBt.l]
 			+ U" " + btThickList[(int)inputMode::nowInBt.t],
-			Vec2(mgWpx + 200, 120), unspecified, !enableMb())) {
+			Vec2(mgWpx + 200, 60), unspecified, inputMode::isBorderMode && !enableMb())) {
 			mbs["BorderTypeSel"].enable = true;
 		}
-		if (SimpleGUI::Button(U"色変更", Vec2(mgWpx + 350, 120), unspecified, !enableMb())) {
+		if (SimpleGUI::Button(U"色　　", Vec2(mgWpx + 340, 60), unspecified, inputMode::isBorderMode && !enableMb())) {
 			mbs["ColorLineSel"].enable = true;
 		}
 		borderColorSample::r.draw(borderColorSample::borderColor);

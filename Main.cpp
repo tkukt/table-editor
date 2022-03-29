@@ -140,28 +140,6 @@ struct pos {
 	}
 };
 
-struct FocArea {
-	int i1, i2, j1, j2; // 1:先に選択したセル 2:2番目に選択したセル
-	bool isAct;
-	FocArea(bool isAct = false) : i1(-1), i2(-1), j1(-1), j2(-1), isAct(isAct) { assert(!isAct); }
-	FocArea(int i, int j) : i1(i), i2(i), j1(j), j2(j), isAct(true) {}
-	FocArea(int i1, int i2, int j1, int j2) :i1(i1), i2(i2), j1(j1), j2(j2), isAct(true) {}
-	void add(int i, int j) {
-		assert(i1 != -1 && j1 != -1);
-		i2 = i, j2 = j;
-	}
-	int w() const {
-		return abs(j2 - j1) + 1;
-	}
-	int h() const {
-		return abs(i2 - i1) + 1;
-	}
-	int l() const { return std::min(j1, j2); }
-	int r() const { return std::max(j1, j2); }
-	int u() const { return std::min(i1, i2); }
-	int d() const { return std::max(i1, i2); }
-};
-
 struct CellData {
 	int h, w;
 	String title;
@@ -191,6 +169,34 @@ struct CellData {
 	}
 	void reCalcWSum() {
 		for (int i = 0; i < w; i++) sumW[i + 1] = sumW[i] + cellws[i];
+	}
+};
+
+struct FocArea {
+	int i1, i2, j1, j2; // 1:先に選択したセル 2:2番目に選択したセル
+	int u, d, r, l, h, w;
+	bool isAct;
+	FocArea(bool isAct = false) : i1(-1), i2(-1), j1(-1), j2(-1), isAct(isAct) { assert(!isAct); }
+	FocArea(int i, int j, const CellData& cellData) : i1(i), i2(i), j1(j), j2(j), isAct(true) { calcSelArea(cellData); }
+	FocArea(int i1, int i2, int j1, int j2, const CellData& cellData) :i1(i1), i2(i2), j1(j1), j2(j2), isAct(true) { calcSelArea(cellData); }
+	void add(int i, int j, const CellData& cellData) {
+		assert(i1 != -1 && j1 != -1);
+		i2 = i, j2 = j;
+		calcSelArea(cellData);
+	}
+	void calcSelArea(const CellData& cellData) { // 結合されたセルも考慮して選択領域を計算(udlr)
+		u = INT_MAX, d = 0, l = INT_MAX, r = 0;
+		for (int i = std::min(i1, i2); i <= std::max(i1, i2); i++) {
+			for (int j = std::min(j1, j2); j <= std::max(j1, j2); j++) {
+				const pos& par = cellData.cmbPar[i][j];
+				chmin(u, par.i);
+				chmax(d, par.i + cellData.cmbSz[par.i][par.j].i - 1);
+				chmin(l, par.j);
+				chmax(r, par.j + cellData.cmbSz[par.i][par.j].j - 1);
+			}
+		}
+		h = d - u + 1;
+		w = r - l + 1;
 	}
 };
 
@@ -259,11 +265,17 @@ bool mouseEventProc(CellData& cellData, FocArea& focArea, const Font& font, doub
 		// 列幅調整ダブルクリック
 		if (isAdj && Scene::Time() - preClickTime < 0.5) {
 			int fitWidth = 50;
+			bool isEmpty = true;
 			for (int i = 0; i < cellData.h; i++) {
-				chmax(fitWidth, (int)font(cellData.str[i][ladjIdx]).region().w + 10 * 2 + 2);
+				if (cellData.cmbSz[i][ladjIdx].j == 1 && cellData.str[i][ladjIdx].size() > 0) {
+					isEmpty = false;
+					chmax(fitWidth, (int)font(cellData.str[i][ladjIdx]).region().w + 10 * 2 + 2);
+				}
 			}
-			cellData.cellws[ladjIdx] = fitWidth;
-			tIsChangeData = true;
+			if (!isEmpty) {
+				cellData.cellws[ladjIdx] = fitWidth;
+				tIsChangeData = true;
+			}
 			ladjIdx = -1;
 		}
 		preClickTime = Scene::Time();
@@ -280,20 +292,20 @@ bool mouseEventProc(CellData& cellData, FocArea& focArea, const Font& font, doub
 				}
 			}
 			// アクティブセルが変更されてかつ内容が編集された場合
-			if ((focArea.i1 != seli || focArea.j1 != selj) && focArea.isAct && tbinput.text != cellData.str[focArea.i1][focArea.j1]) {
+			if ((focArea.i1 != seli || focArea.j1 != selj) && focArea.isAct && tbinput.text != cellData.str[focArea.u][focArea.l]) {
 				tIsChangeData = true;
-				cellData.str[focArea.i1][focArea.j1] = tbinput.text;
+				cellData.str[focArea.u][focArea.l] = tbinput.text;
 			}
 			if (seli != -1 && selj != -1) { // セルをクリックした場合
-				tbinput.text = cellData.str[seli][selj];
-				if (KeyShift.pressed()) { // Shiftを押しながらクリックした場合
+				if (focArea.isAct && KeyShift.pressed()) { // Shiftを押しながらクリックした場合
 					// アクティブセルを範囲選択
-					focArea.add(seli, selj);
+					focArea.add(seli, selj, cellData);
 				}
 				else {
 					// 別セルクリック
-					focArea = FocArea(seli, selj);
+					focArea = FocArea(seli, selj, cellData);
 				}
+				tbinput.text = cellData.str[focArea.u][focArea.l];
 			}
 			else { // 範囲外をクリックした場合
 				focArea = FocArea(false);
@@ -333,38 +345,48 @@ auto idxToPos = [](const CellData& cellData, int i, int j) {
 
 bool combCell(CellData& cellData, const FocArea& focArea, bool& isSuccess) {
 	isSuccess = true;
-	for (int i = focArea.u(); i <= focArea.d(); i++) {
-		for (int j = focArea.l(); j <= focArea.r(); j++) {
+	for (int i = focArea.u; i <= focArea.d; i++) {
+		for (int j = focArea.l; j <= focArea.r; j++) {
 			if (cellData.cmbPar[i][j] != pos(i, j) || cellData.cmbSz[i][j] != pos(1, 1)) {
 				isSuccess = false;
 			}
 		}
 	}
 	if (!isSuccess) return false;
-	cellData.cmbSz[focArea.u()][focArea.l()] = pos(focArea.h(), focArea.w());
-	for (int i = focArea.u(); i <= focArea.d(); i++) {
-		for (int j = focArea.l(); j <= focArea.r(); j++) {
-			cellData.cmbPar[i][j] = pos(focArea.u(), focArea.l());
+	cellData.cmbSz[focArea.u][focArea.l] = pos(focArea.h, focArea.w);
+	for (int i = focArea.u; i <= focArea.d; i++) {
+		for (int j = focArea.l; j <= focArea.r; j++) {
+			cellData.cmbPar[i][j] = pos(focArea.u, focArea.l);
 		}
 	}
+	String defStr = U""; // 結合後の文字列は左上のみ採用
+	for (int i = focArea.d; i >= focArea.u; i--) {
+		for (int j = focArea.r; j >= focArea.l; j--) {
+			if (cellData.str[i][j].size() > 0) {
+				defStr = cellData.str[i][j];
+				cellData.str[i][j] = U"";
+			}
+		}
+	}
+	cellData.str[focArea.u][focArea.l] = defStr;
 	return true;
 }
 
 bool reCombCell(CellData& cellData, const FocArea& focArea, bool& isSuccess) {
 	isSuccess = true;
-	for (int i = focArea.u(); i <= focArea.d(); i++) {
-		for (int j = focArea.l(); j <= focArea.r(); j++) {
+	for (int i = focArea.u; i <= focArea.d; i++) {
+		for (int j = focArea.l; j <= focArea.r; j++) {
 			const pos& p = cellData.cmbPar[i][j];
 			const pos& sz = cellData.cmbSz[i][j];
-			if (!(focArea.u() <= p.i && p.i + sz.i - 1 <= focArea.d() && focArea.l() <= p.j && p.j + sz.j - 1 <= focArea.r())) {
+			if (!(focArea.u <= p.i && p.i + sz.i - 1 <= focArea.d && focArea.l <= p.j && p.j + sz.j - 1 <= focArea.r)) {
 				isSuccess = false;
 			}
 		}
 	}
 	if (!isSuccess) return false;
 	bool isChange = false;
-	for (int i = focArea.u(); i <= focArea.d(); i++) {
-		for (int j = focArea.l(); j <= focArea.r(); j++) {
+	for (int i = focArea.u; i <= focArea.d; i++) {
+		for (int j = focArea.l; j <= focArea.r; j++) {
 			if (cellData.cmbSz[i][j] != pos(1, 1)) isChange = true;
 			cellData.cmbPar[i][j] = pos(i, j);
 			cellData.cmbSz[i][j] = pos(1, 1);
@@ -449,10 +471,10 @@ void drawCellData(const CellData& cellData, const FocArea& focArea, const Font& 
 	// フォーカスしているセル
 	if (focArea.isAct) {
 		int width = 0;
-		for (int j = focArea.l(); j <= focArea.r(); j++) {
+		for (int j = focArea.l; j <= focArea.r; j++) {
 			width += cellData.cellws[j];
 		}
-		RectF(idxToPos(cellData, focArea.u(), focArea.l()), width, cellh * focArea.h()).drawFrame(4, Palette::Green);
+		RectF(idxToPos(cellData, focArea.u, focArea.l), width, cellh * (abs(focArea.u - focArea.d) + 1)).drawFrame(4, Palette::Green);
 	}
 
 	// 右クリック時カラーピッカーの描画
@@ -463,16 +485,18 @@ void drawCellData(const CellData& cellData, const FocArea& focArea, const Font& 
 	// テキストdataの描画
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
-			if (font(cellData.str[i][j]).region().w + 10 * 2 <= cellData.cellws[j]) {
-				font(cellData.str[i][j]).draw(10 + mgWpx + cellData.sumW[j], mgHpx + cellh * i, Palette::Black);
-			}
-			else {
-				String drData = cellData.str[i][j];
-				while (drData.size() > 0) {
-					drData.pop_back();
-					if (font(drData + U"...").region().w + 10 * 2 <= cellData.cellws[j]) {
-						font(drData + U"...").draw(10 + mgWpx + cellData.sumW[j], mgHpx + cellh * i, Palette::Black);
-						break;
+			if (cellData.cmbPar[i][j] == pos(i, j)) {
+				if (font(cellData.str[i][j]).region().w + 10 * 2 <= cellData.sumW[j + cellData.cmbSz[i][j].j] - cellData.sumW[j]) {
+					font(cellData.str[i][j]).draw(10 + mgWpx + cellData.sumW[j], mgHpx + cellh * (2 * i + cellData.cmbSz[i][j].i - 1) / 2, Palette::Black);
+				}
+				else {
+					String drData = cellData.str[i][j];
+					while (drData.size() > 0) {
+						drData.pop_back();
+						if (font(drData + U"...").region().w + 10 * 2 <= cellData.sumW[j + cellData.cmbSz[i][j].j] - cellData.sumW[j]) {
+							font(drData + U"...").draw(10 + mgWpx + cellData.sumW[j], mgHpx + cellh * (2 * i + cellData.cmbSz[i][j].i - 1) / 2, Palette::Black);
+							break;
+						}
 					}
 				}
 			}
@@ -489,6 +513,12 @@ void tbInputUpdate(CellData& cellData, const FocArea& focArea, TextEditState& tb
 	}
 }
 
+namespace getModeSub {
+	template<typename T>
+	bool isEmpty(T x) {return false;}
+	bool isEmpty(String x) { return x.size() == 0; }
+};
+
 template<typename T>
 T getMode(const std::vector<std::vector<T>>& s) {
 	int h = (int)s.size();
@@ -497,10 +527,13 @@ T getMode(const std::vector<std::vector<T>>& s) {
 	std::map<T, int> cnt;
 	for (int i = 0; i < h; i++) {
 		for (int j = 0; j < w; j++) {
-			cnt[s[i][j]]++;
+			if (!getModeSub::isEmpty(s[i][j])) {
+				cnt[s[i][j]]++;
+			}
 		}
 	}
 	int maxCnt = 0;
+	assert(cnt.size() != 0);
 	T mode = cnt.begin()->first;
 	for (const auto& p : cnt) {
 		if (chmax(maxCnt, p.second)) {
@@ -551,22 +584,6 @@ String convertData(const CellData& cellData) {
 	// 表枠上/左側の罫線種類指定
 	res += bToClassS(bpos::top, cellData.btHol[0][0]);
 	res += U" " + bToClassS(bpos::left, cellData.btVer[0][0]);
-	// TA多数決
-	tapos maxTaType;
-	{
-		std::vector<int> taSs((int)tapos::SIZE, 0);
-		for (int i = 0; i < cellData.h; i++) {
-			for (int j = 0; j < cellData.w; j++) {
-				taSs[(int)cellData.tas[i][j]]++;
-			}
-		}
-		int maxCnt = 0;
-		for (int i = 0; i < (int)tapos::SIZE; i++) {
-			if (chmax(maxCnt, taSs[i])) {
-				maxTaType = (tapos)i;
-			}
-		}
-	}
 	res += U" " + taToClassS(getMode(cellData.tas));
 	// 個々のセルの指定を調べる
 	std::vector<std::vector<String>> bClassSr(cellData.h, std::vector<String>(cellData.w));
@@ -576,11 +593,14 @@ String convertData(const CellData& cellData) {
 	std::vector<std::vector<String>> bColSb(cellData.h, std::vector<String>(cellData.w));
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
-			bClassSr[i][j] = bToClassS(bpos::right, cellData.btVer[i][j + 1]);
-			bColSr[i][j] = U"r#" + cellData.btVer[i][j + 1].color.toColor().toHex();
-			bClassSb[i][j] = bToClassS(bpos::bottom, cellData.btHol[i + 1][j]);
-			bColSb[i][j] = U"b#" + cellData.btHol[i + 1][j].color.toColor().toHex();
-			colS[i][j] = U"#" + cellData.color[i][j].toColor().toHex();
+			if (cellData.cmbPar[i][j] == pos(i, j)) {
+				const pos& sz = cellData.cmbSz[i][j];
+				bClassSr[i][j] = bToClassS(bpos::right, cellData.btVer[i][(j + sz.j - 1) + 1]);
+				bColSr[i][j] = U"r#" + cellData.btVer[i][(j + sz.j - 1) + 1].color.toColor().toHex();
+				bClassSb[i][j] = bToClassS(bpos::bottom, cellData.btHol[(i + sz.i - 1) + 1][j]);
+				bColSb[i][j] = U"b#" + cellData.btHol[(i + sz.i - 1) + 1][j].color.toColor().toHex();
+				colS[i][j] = U"#" + cellData.color[i][j].toColor().toHex();
+			}
 		}
 	}
 	String modeBClassSr = getMode(bClassSr);
@@ -617,8 +637,13 @@ String convertData(const CellData& cellData) {
 				segRes += bColSr[i][j];
 			}
 			if (modeBColSb != bColSb[i][j]) {
-				if (segRes.size() != 0)segRes += isInsCom ? U" " : U", ";
+				if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ";
 				segRes += bColSb[i][j];
+			}
+
+			if (cellData.cmbSz[i][j] != pos(1, 1)) {
+				if (segRes.size() != 0) segRes += U",";
+				segRes += U"+" + Format(cellData.cmbSz[i][j].j) + U":" + Format(cellData.cmbSz[i][j].i);
 			}
 
 			if (segRes.size() != 0) res += U"]";
@@ -644,7 +669,7 @@ void Main() {
 	const int zoomMaxLev = 6;
 
 	const int fontSizeMin = round(fontSize::nomal * pow(zoomRatio, -zoomMaxLev)),
-			  fontSizeMax = round(fontSize::nomal * pow(zoomRatio, zoomMaxLev));
+		fontSizeMax = round(fontSize::nomal * pow(zoomRatio, zoomMaxLev));
 	std::vector<Font> fonts(fontSizeMax + 1);
 	for (int i = fontSizeMin; i <= fontSizeMax; i++) { fonts[i] = Font(i); }
 	int zoomLevel = 0;
@@ -673,7 +698,7 @@ void Main() {
 		{"BorderTypeSel", messageBox(U"", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 		{"ColorLineSel", messageBox(U"", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 		{"ConvertSuc", messageBox(U"コンバート結果がクリップボードにコピーされました。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
-		{"ConvertFal", messageBox(U"表の上の罫線および左の罫線は同じ種類にしてください。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
+		{"ConvertFal", messageBox(U"表の上と左および結合されたセルの下と右の罫線は同じ種類にしてください。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 		{"CombFal", messageBox(U"その領域はすでに結合されたセルを含んでいるためセルを結合できません。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 		{"ReCombFal", messageBox(U"その領域は結合されたセルを完全に含んでいないためセルの結合を解除できません。", fonts[fontSize::msg], messageBox::styleType::mb_OK)},
 	};
@@ -688,12 +713,9 @@ void Main() {
 	const std::vector<String> btThickList = { U"中線", U"太線" };
 	inputMode::nowInBt;
 
-	// TODO : セル結合
-
-	// TODO : どこか text alignment未実装
-	// TODO : どこか 拡大縮小未実装
-	// TODO : どこか 縦横スクロール未実装
-
+	// TODO : ALL インポート未実装
+	// TODO : ALL text alignment未実装
+	// TODO : ALL 縦横スクロール未実装
 
 	while (System::Update()) {
 		CellData cellData = record[recordCur];
@@ -708,7 +730,7 @@ void Main() {
 			}
 			isClickBotton = true;
 		}
-		if (SimpleGUI::Button(U"セル結合解除", Vec2(mgWpx+130, 110), unspecified, focArea.isAct && !enableMb())) {
+		if (SimpleGUI::Button(U"セル結合解除", Vec2(mgWpx + 130, 110), unspecified, focArea.isAct && !enableMb())) {
 			bool isSuccess = true;
 			isChangeData |= reCombCell(cellData, focArea, isSuccess);
 			if (!isSuccess) {
@@ -716,14 +738,14 @@ void Main() {
 			}
 			isClickBotton = true;
 		}
-		fonts[20](U"文字揃え").draw(Vec2(mgWpx+160 + 145, 113), Palette::Black);
-		if (SimpleGUI::Button(U"左", Vec2(mgWpx+160 +72+ 155, 110), unspecified, focArea.isAct && !enableMb())) {
+		fonts[20](U"文字揃え").draw(Vec2(mgWpx + 160 + 145, 113), Palette::Black);
+		if (SimpleGUI::Button(U"左", Vec2(mgWpx + 160 + 72 + 155, 110), unspecified, focArea.isAct && !enableMb())) {
 			isClickBotton = true;
 		}
-		if (SimpleGUI::Button(U"中", Vec2(mgWpx+160 +72+ 220, 110), unspecified, focArea.isAct && !enableMb())) {
+		if (SimpleGUI::Button(U"中", Vec2(mgWpx + 160 + 72 + 220, 110), unspecified, focArea.isAct && !enableMb())) {
 			isClickBotton = true;
 		}
-		if (SimpleGUI::Button(U"右", Vec2(mgWpx+160 +72+ 285, 110), unspecified, focArea.isAct && !enableMb())) {
+		if (SimpleGUI::Button(U"右", Vec2(mgWpx + 160 + 72 + 285, 110), unspecified, focArea.isAct && !enableMb())) {
 			isClickBotton = true;
 		}
 
@@ -750,8 +772,8 @@ void Main() {
 			}
 		}
 		if (mbs["ColorSel"].isAnsed()) {
-			for (int i = focArea.u(); i <= focArea.d(); i++) {
-				for (int j = focArea.l(); j <= focArea.r(); j++) {
+			for (int i = focArea.u; i <= focArea.d; i++) {
+				for (int j = focArea.l; j <= focArea.r; j++) {
 					if (cellData.color[i][j] != cellColorSample::color) {
 						isChangeData = true;
 						cellData.color[i][j] = cellColorSample::color;
@@ -815,6 +837,27 @@ void Main() {
 					isCorBt = false;
 				}
 			}
+			// 結合したセルの下と右のborderTypeが一致しているかのチェック
+			for (int i = 0; i < cellData.h; i++) {
+				for (int j = 0; j < cellData.w; j++) {
+					if (cellData.cmbPar[i][j] == pos(i, j)) {
+						const pos& sz = cellData.cmbSz[i][j];
+						// 下
+						for (int tj = 0; tj < sz.j - 1; tj++) {
+							if (cellData.btHol[i + sz.i][j + tj] != cellData.btHol[i + sz.i][j + tj + 1]) {
+								isCorBt = false;
+							}
+						}
+						// 右
+						for (int ti = 0; ti < sz.i - 1; ti++) {
+							if (cellData.btVer[i + ti][j + sz.j] != cellData.btVer[i + ti + 1][j + sz.j]) {
+								isCorBt = false;
+							}
+						}
+					}
+				}
+			}
+
 			if (isCorBt) {
 				String res = convertData(cellData);
 				Clipboard::SetText(res);
@@ -835,8 +878,8 @@ void Main() {
 		}
 		borderColorSample::r.draw(borderColorSample::borderColor);
 
-		if (focArea.isAct && focArea.h() * focArea.w() == 1 && !enableMb()) {
-			SimpleGUI::TextBox(tbInput, idxToPos(cellData, focArea.i1, focArea.j1) + Vec2(10, 10), cellData.cellws[focArea.j1]);
+		if (focArea.isAct && focArea.i1 == focArea.i2 && focArea.j1 == focArea.j2 && !enableMb()) {
+			SimpleGUI::TextBox(tbInput, (idxToPos(cellData, focArea.u, focArea.l) + idxToPos(cellData, focArea.d, focArea.l)) / 2 + Vec2(10, 10), cellData.sumW[focArea.r + 1] - cellData.sumW[focArea.l]);
 		}
 
 		if (isChangeData) {

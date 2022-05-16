@@ -596,9 +596,9 @@ String convertData(const CellData& cellData) {
 			if (cellData.cmbPar[i][j] == pos(i, j)) {
 				const pos& sz = cellData.cmbSz[i][j];
 				bClassSr[i][j] = bToClassS(bpos::right, cellData.btVer[i][(j + sz.j - 1) + 1]);
-				bColSr[i][j] = U"r#" + cellData.btVer[i][(j + sz.j - 1) + 1].color.toColor().toHex();
+				bColSr[i][j] = U"#" + cellData.btVer[i][(j + sz.j - 1) + 1].color.toColor().toHex() + U"r";
 				bClassSb[i][j] = bToClassS(bpos::bottom, cellData.btHol[(i + sz.i - 1) + 1][j]);
-				bColSb[i][j] = U"b#" + cellData.btHol[(i + sz.i - 1) + 1][j].color.toColor().toHex();
+				bColSb[i][j] = U"#" + cellData.btHol[(i + sz.i - 1) + 1][j].color.toColor().toHex() + U"b";
 				colS[i][j] = U"#" + cellData.color[i][j].toColor().toHex();
 			}
 		}
@@ -611,43 +611,48 @@ String convertData(const CellData& cellData) {
 	res += U" " + modeBClassSr;
 	res += U" " + modeBClassSb;
 	res += U"," + modeColS;
-	res += U" t#" + cellData.btHol[0][0].color.toColor().toHex(); // 上罫線色
-	res += U" l#" + cellData.btVer[0][0].color.toColor().toHex(); // 左罫線色
+	res += U" #" + cellData.btHol[0][0].color.toColor().toHex() + U"t"; // 上罫線色
+	res += U" #" + cellData.btVer[0][0].color.toColor().toHex() + U"l"; // 左罫線色
 	res += U" " + modeBColSr;
 	res += U" " + modeBColSb;
 	for (int i = 0; i < cellData.h; i++) {
 		for (int j = 0; j < cellData.w; j++) {
 			res += U";";
-			res += cellData.str[i][j];
-			String segRes = U"";
-			if (modeBClassSr != bClassSr[i][j]) {
-				segRes += bClassSr[i][j];
-			}
-			if (modeBClassSb != bClassSb[i][j]) {
-				if (segRes.size() != 0) segRes += U" ";
-				segRes += bClassSb[i][j];
-			}
-			bool isInsCom = false;
-			if (modeColS != colS[i][j]) {
-				if (segRes.size() != 0) segRes += U",", isInsCom = true;
-				segRes += colS[i][j];
-			}
-			if (modeBColSr != bColSr[i][j]) {
-				if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ", isInsCom = true;
-				segRes += bColSr[i][j];
-			}
-			if (modeBColSb != bColSb[i][j]) {
-				if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ";
-				segRes += bColSb[i][j];
-			}
+			if (cellData.cmbPar[i][j] == pos(i, j)) {
+				res += cellData.str[i][j];
+				String segRes = U"";
+				if (modeBClassSr != bClassSr[i][j]) {
+					segRes += bClassSr[i][j];
+				}
+				if (modeBClassSb != bClassSb[i][j]) {
+					if (segRes.size() != 0) segRes += U" ";
+					segRes += bClassSb[i][j];
+				}
+				bool isInsCom = false;
+				if (modeColS != colS[i][j]) {
+					if (segRes.size() != 0) segRes += U",", isInsCom = true;
+					segRes += colS[i][j];
+				}
+				if (modeBColSr != bColSr[i][j]) {
+					if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ", isInsCom = true;
+					segRes += bColSr[i][j];
+				}
+				if (modeBColSb != bColSb[i][j]) {
+					if (segRes.size() != 0) segRes += isInsCom ? U" " : U", ";
+					segRes += bColSb[i][j];
+				}
 
-			if (cellData.cmbSz[i][j] != pos(1, 1)) {
-				if (segRes.size() != 0) segRes += U",";
-				segRes += U"+" + Format(cellData.cmbSz[i][j].j) + U":" + Format(cellData.cmbSz[i][j].i);
-			}
+				if (cellData.cmbSz[i][j] != pos(1, 1)) {
+					if (segRes.size() != 0) segRes += U",";
+					segRes += U"+" + Format(cellData.cmbSz[i][j].j) + U":" + Format(cellData.cmbSz[i][j].i);
+				}
 
-			if (segRes.size() != 0) res += U"]";
-			res += segRes;
+				if (segRes.size() != 0) res += U"]";
+				res += segRes;
+			}
+			else {
+				res += U"]*";
+			}
 		}
 		res += U"\n";
 	}
